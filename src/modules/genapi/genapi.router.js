@@ -2,7 +2,6 @@ const express = require("express");
 const { getDb } = require("../../db");
 
 const genapiRouter = express.Router();
-
 const DEBUG = (process.env.GENAPI_DEBUG || "0") === "1";
 
 genapiRouter.post("/webhook", async (req, res) => {
@@ -26,18 +25,23 @@ genapiRouter.post("/webhook", async (req, res) => {
         }
 
         if (DEBUG) {
-            console.log("[genapi webhook]");
-            console.log("jobId:", jobId);
-            console.log("body:", JSON.stringify(req.body, null, 2));
+            console.log("[genapi webhook] jobId:", jobId);
+            console.log("[genapi webhook] body:", JSON.stringify(req.body, null, 2));
         }
 
-        // webhook — только сигнал активности
-        await db("jobs")
-            .where({ id: jobId })
-            .update({
-                provider_status: req.body?.status || null,
-                updated_at: new Date().toISOString()
-            });
+        const patch = {
+            provider_status: req.body?.status || null,
+            updated_at: new Date().toISOString(),
+        };
+
+        // В DEBUG можно сохранить кусок payload в error_message для быстрой диагностики,
+        // но только если job ещё не completed (чтобы не затирать ошибки/историю).
+        if (DEBUG && job.status !== "completed") {
+            const safeSnippet = JSON.stringify(req.body || {}, null, 2).slice(0, 1500);
+            patch.error_message = `SOFT: webhook received\n${safeSnippet}`;
+        }
+
+        await db("jobs").where({ id: jobId }).update(patch);
 
         return res.json({ ok: true });
     } catch (e) {
