@@ -3,14 +3,26 @@ const express = require("express");
 const path = require("path");
 const swaggerUi = require("swagger-ui-express");
 const YAML = require("yamljs");
-const cors = require('cors');
 
-const corsOptions = {
-    origin: ['*'],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+const corsMiddleware = (req, res, next) => {
+    const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*').split(',');
+
+    const origin = req.headers.origin;
+
+    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin || '')) {
+        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    }
+
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
 };
+
 
 
 const { createAuthRouter } = require("./modules/auth/auth.router");
@@ -24,7 +36,7 @@ const { yookassaRouter } = require("./modules/yookassa/yookassa.router");
 const { uploadsRouter } = require("./modules/uploads/uploads.router");
 
 const app = express();
-app.use(cors(corsOptions));
+app.use(corsMiddleware);
 app.use(express.json({ limit: "5mb" }));
 
 app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
