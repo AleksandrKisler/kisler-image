@@ -26,11 +26,10 @@ async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
         const modelId = process.env.GENAPI_MODEL_ID || "kling-video-2-6";
         const url = `/api/v1/networks/${modelId}`;
         const duration = 5;
-        const aspectRatio = process.env.GENAPI_ASPECT_RATIO || "1:1";
+        const aspectRatio = process.env.GENAPI_ASPECT_RATIO || "16:9";
         const motionStrength = Number(process.env.GENAPI_MOTION_STRENGTH || 0.4);
 
         const payload = {
-            // Root-level fields (required by GenAPI validator)
             image_url: imageUrl,
             prompt: String(prompt || "").trim(),
             negative_prompt: String(negativePrompt || "").trim(),
@@ -38,16 +37,6 @@ async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
             aspect_ratio: aspectRatio,
             motion_strength: motionStrength,
             callback_url: callbackUrl || undefined,
-
-            // Also provide under `input` (in case model schema uses wrapper)
-            input: {
-                image_url: imageUrl,
-                prompt: String(prompt || "").trim(),
-                negative_prompt: String(negativePrompt || "").trim(),
-                duration,
-                aspect_ratio: aspectRatio,
-                motion_strength: motionStrength
-            }
         };
         console.log(
             "[GENAPI PAYLOAD]",
