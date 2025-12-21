@@ -62,6 +62,7 @@ async function getRequestStatus(requestId) {
     const tpl = process.env.GENAPI_STATUS_PATH || "/api/v1/requests/{id}";
     const path = tpl.replace("{id}", encodeURIComponent(requestId));
     const res = await api.get(path);
+    console.log(res);
     if (!res.data || !res.data.status) throw new Error("GenAPI: invalid status response");
     return res.data; // { status: processing|success|failed, result_url?, error? }
 }

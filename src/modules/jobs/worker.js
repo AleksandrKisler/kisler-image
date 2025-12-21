@@ -93,7 +93,6 @@ async function runOnce() {
                     console.warn("[poll] GenAPI request not found (404), waiting for webhook");
                     continue;
                 }
-                downloadToLocal
                 throw e;
             }
 
