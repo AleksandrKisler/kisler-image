@@ -23,7 +23,9 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+	APP_PUBLIC_BASE_URL: "https://photo.skislemt.beget.tech",
+        GENAPI_CALLBACK_SECRET: "AZXqZ50dvmgVX6Da2BqhwyOQD4cEWB4KyF5GWfElzv7"
       },
       error_file: 'logs/worker-error.log',
       out_file: 'logs/worker-out.log',
