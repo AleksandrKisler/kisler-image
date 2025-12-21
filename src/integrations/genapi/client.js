@@ -25,7 +25,7 @@ async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
     try {
         const modelId = process.env.GENAPI_MODEL_ID || "kling-video-2-6";
         const url = `/api/v1/networks/${modelId}`;
-        const duration = 5;
+        const duration = 1;
         const aspectRatio = process.env.GENAPI_ASPECT_RATIO || "16:9";
 
         const payload = {
