@@ -8,19 +8,19 @@ const { failStuckJobs } = require("./jobTimeout");
 const { markJobFailedAndRefund } = require("./markFailedAndRefund");
 
 /**
- * Комментарии (главные исправления):
- * 1) Убираем бесконечный while(true), который "видит success/failed, но ждёт webhook".
- *    Теперь worker САМ завершает job при success и ставит failed/refund при failed.
+ * Комментарии (по уму + совместимость):
  *
- * 2) Обновляем updated_at во время polling (иначе failStuckJobs мог убить job, если webhook не пришёл).
+ * ✅ По уму: новые job создаются как `queued` (см. jobs.router.js)
+ * ✅ Совместимость: worker также подхватывает "старые/сломанные" job,
+ *    которые уже `processing`, но provider_job_id ещё NULL.
  *
- * 3) Исправляем takeOneQueuedJob: раньше было условие гонки
- *    (update queued -> потом выбираем "любую processing без provider_job_id").
- *    Теперь атомарно берём конкретный job через транзакцию.
+ * Это позволяет:
+ * - не потерять старые задачи
+ * - плавно мигрировать прод без ручной чистки БД
  */
 
 const POLL_INTERVAL_MS = 4000;
-const KEEPALIVE_EVERY_MS = 20_000; // раз в N мс трогаем updated_at во время processing
+const KEEPALIVE_EVERY_MS = 20_000;
 
 function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -40,7 +40,7 @@ function guessExtByContentType(contentType) {
 }
 
 async function downloadToFile(url, absPath) {
-    const res = await axios.get(url, { responseType: "stream", timeout: 120_000 });
+    const res = await axios.get(url, { responseType: "stream", timeout: 180_000 });
 
     await new Promise((resolve, reject) => {
         const ws = fs.createWriteStream(absPath);
@@ -52,24 +52,35 @@ async function downloadToFile(url, absPath) {
     return res.headers?.["content-type"] || null;
 }
 
-async function takeOneQueuedJob(db) {
+/**
+ * Берём задачу на старт:
+ * - queued (правильный поток)
+ * - ИЛИ processing без provider_job_id (совместимость/спасение зависших)
+ */
+async function takeOneStartableJob(db) {
     const now = new Date().toISOString();
 
     return db.transaction(async (trx) => {
         const job = await trx("jobs")
-            .where({ status: "queued" })
+            .whereIn("status", ["queued", "processing"])
+            .whereNull("provider_job_id")
             .orderBy("created_at", "asc")
             .first();
 
         if (!job) return null;
 
+        // “захват” — ставим processing (если был queued) и обновляем updated_at
         const updated = await trx("jobs")
-            .where({ id: job.id, status: "queued" })
-            .update({ status: "processing", updated_at: now });
+            .where({ id: job.id })
+            .whereIn("status", ["queued", "processing"])
+            .whereNull("provider_job_id")
+            .update({
+                status: "processing",
+                updated_at: now,
+            });
 
         if (!updated) return null;
 
-        // Возвращаем уже “наш” job
         return trx("jobs").where({ id: job.id }).first();
     });
 }
@@ -77,10 +88,9 @@ async function takeOneQueuedJob(db) {
 async function runOnce() {
     const db = getDb();
 
-    // страховка от вечных processing
     await failStuckJobs(db);
 
-    const job = await takeOneQueuedJob(db);
+    const job = await takeOneStartableJob(db);
     if (!job) return;
 
     const publicBase = getPublicBase();
@@ -105,7 +115,7 @@ async function runOnce() {
     fs.mkdirSync(videoDir, { recursive: true });
 
     try {
-        console.log("[worker] create job", job.id);
+        console.log("[worker] start job", job.id);
         console.log("[worker] image:", absoluteImageUrl);
 
         const created = await createKlingJob({
@@ -126,36 +136,20 @@ async function runOnce() {
                 updated_at: new Date().toISOString(),
             });
 
-        // Polling + финализация
         let lastKeepaliveAt = Date.now();
 
         while (true) {
             await sleep(POLL_INTERVAL_MS);
 
-            // keepalive, чтобы timeout-джоба не убивало job если webhook не пришёл
             if (Date.now() - lastKeepaliveAt >= KEEPALIVE_EVERY_MS) {
                 lastKeepaliveAt = Date.now();
-                await db("jobs")
-                    .where({ id: job.id })
-                    .update({ updated_at: new Date().toISOString() });
+                await db("jobs").where({ id: job.id }).update({ updated_at: new Date().toISOString() });
             }
 
-            let st;
-            try {
-                st = await getRequestStatus(providerRequestId);
-            } catch (e) {
-                // Некоторые провайдеры могут отдавать 404 после завершения/переноса,
-                // но тут мы не хотим "висеть вечно".
-                if (e.response?.status === 404) {
-                    console.warn("[poll] 404 — status not found, retrying", "job", job.id);
-                    continue;
-                }
-                throw e;
-            }
+            const st = await getRequestStatus(providerRequestId);
 
             const status = st?.status;
 
-            // обновляем provider_status, чтобы видеть прогресс
             await db("jobs")
                 .where({ id: job.id })
                 .update({
@@ -165,7 +159,7 @@ async function runOnce() {
 
             if (!status || status === "processing") continue;
 
-            console.log("[poll] status =", status, "job", job.id);
+            console.log("[worker] final status =", status, "job", job.id);
 
             if (status === "failed") {
                 const errMsg = st?.error?.message || st?.message || "GenAPI: generation failed";
@@ -174,14 +168,12 @@ async function runOnce() {
             }
 
             if (status === "success") {
-                const remoteUrl = st._videoUrl; // нормализованное поле из client.js
+                const remoteUrl = st._videoUrl;
                 if (!remoteUrl) {
-                    // Это важный кейс: success есть, а URL нет -> считаем ошибкой (refund).
                     await markJobFailedAndRefund(job.id, "GenAPI success but video URL missing in status payload");
                     return;
                 }
 
-                // Определим расширение: пробуем скачать и берём content-type
                 const tmpPath = path.join(videoDir, `${job.id}.tmp`);
                 const contentType = await downloadToFile(remoteUrl, tmpPath);
                 const ext = guessExtByContentType(contentType);
@@ -189,7 +181,6 @@ async function runOnce() {
                 const finalFileName = `${job.id}${ext}`;
                 const finalAbsPath = path.join(videoDir, finalFileName);
 
-                // атомарное переименование
                 fs.renameSync(tmpPath, finalAbsPath);
 
                 const publicUrl = `/uploads/videos/${finalFileName}`;
@@ -207,19 +198,11 @@ async function runOnce() {
                 return;
             }
 
-            // если провайдер вернёт неизвестный статус — не зависаем бесконечно
-            console.warn("[poll] unknown status:", status, "job", job.id);
+            console.warn("[worker] unknown status:", status, "job", job.id);
         }
     } catch (e) {
         console.error("[worker] error:", e.message);
-
-        // Важно: не ставим failed напрямую — чтобы не было двойных refund/сценариев.
-        // Но если это НЕ "SOFT:", то это реальная ошибка pipeline — лучше вернуть токен.
-        const msg = String(e.message || "Worker error");
-
-        // Если это network/временная проблема, можно оставить SOFT.
-        // Но сейчас — безопаснее вернуть токен, чтобы не “съедать” баланс пользователя.
-        await markJobFailedAndRefund(job.id, `Worker error: ${msg}`);
+        await markJobFailedAndRefund(job.id, `Worker error: ${String(e.message || "Worker error")}`);
     }
 }
 
