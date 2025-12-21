@@ -6,7 +6,7 @@ const YAML = require("yamljs");
 const cors = require('cors');
 
 const corsOptions = {
-    origin: process.env.ALLOWED_ORIGINS?.split(','),
+    origin: ['*'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
