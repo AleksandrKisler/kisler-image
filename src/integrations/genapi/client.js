@@ -22,24 +22,36 @@ const api = axios.create({
  * We use POST for generation with JSON body.
  */
 async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
-    const modelId = process.env.GENAPI_MODEL_ID || "kling-video-2-6";
-    const url = `/api/v1/networks/${modelId}`;
+    try {
+        const modelId = process.env.GENAPI_MODEL_ID || "kling-video-2-6";
+        const url = `/api/v1/networks/${modelId}`;
 
-    const payload = {
-        input: {
-            image_url: imageUrl,
-            prompt,
-            negative_prompt: negativePrompt,
-            duration: 5,
-        },
-        callback_url: callbackUrl
-    };
-
-    const res = await api.post(url, payload);
-    if (!res.data || !res.data.request_id) {
-        throw new Error("GenAPI: invalid response (missing request_id)");
+        const payload = {
+            input: {
+                image_url: imageUrl,
+                prompt,
+                negative_prompt: negativePrompt,
+                duration: 5,
+            },
+            callback_url: callbackUrl
+        };
+        console.log(
+            "[GENAPI PAYLOAD]",
+            JSON.stringify(payload, null, 2)
+        );
+        const res = await api.post(url, payload);
+        if (!res.data || !res.data.request_id) {
+            throw new Error("GenAPI: invalid response (missing request_id)");
+        }
+        return res.data; // { request_id, status? }
+    }catch (e) {
+        console.error("[GENAPI ERROR STATUS]", e.response?.status);
+        console.error(
+            "[GENAPI ERROR BODY]",
+            JSON.stringify(e.response?.data, null, 2)
+        );
+        throw e;
     }
-    return res.data; // { request_id, status? }
 }
 
 async function getRequestStatus(requestId) {
