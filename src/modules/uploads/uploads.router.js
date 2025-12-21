@@ -48,7 +48,11 @@ const upload = multer({
  */
 uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: { code: "BAD_REQUEST", message: "photo file required" } });
-
+    console.log("Uploaded file:", {
+        path: req.file.path,
+        size: req.file.size,
+        mimetype: req.file.mimetype
+    });
   const imageUrl = `/uploads/photos/${req.file.filename}`;
   res.json({ imageUrl });
 });
