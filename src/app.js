@@ -38,8 +38,8 @@ function createApp() {
 
     app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads")));
 
-    const spec = YAML.load(path.join(process.cwd(), "openapi.yaml"));
-    app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(spec));
+    // const spec = YAML.load(path.join(process.cwd(), "openapi.yaml"));
+    // app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(spec));
 
     app.use("/api/v1/auth", createAuthRouter());
     app.use("/api/v1/me", meRouter);
