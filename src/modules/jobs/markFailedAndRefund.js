@@ -10,17 +10,26 @@ const {getDb} = require("../../db");
 async function markJobFailedAndRefund(jobId, errorMessage) {
     const db = getDb();
     const now = new Date().toISOString();
+    const msg = String(errorMessage || "");
+    const soft = msg.startsWith("SOFT:");
 
     await db.transaction(async (trx) => {
         const job = await trx("jobs").where({id: jobId}).first();
         if (!job) return;
 
         if (job.status === "completed") return;
+        if (soft) {
+            await trx("jobs").where({id: jobId}).update({
+                error_message: msg,
+                updated_at: now
+            });
+            return;
+        }
 
         if (job.refunded_at) {
             await trx("jobs").where({id: jobId}).update({
                 status: "failed",
-                error_message: errorMessage,
+                error_message: msg,
                 updated_at: now
             });
             return;
@@ -28,7 +37,7 @@ async function markJobFailedAndRefund(jobId, errorMessage) {
 
         await trx("jobs").where({id: jobId}).update({
             status: "failed",
-            error_message: errorMessage,
+            error_message: msg,
             refunded_at: now,
             updated_at: now
         });
