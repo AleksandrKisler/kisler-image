@@ -64,9 +64,13 @@ async function runOnce() {
         };
         const prompt = prompts[emotion] || prompts.blink;
         const negativePrompt = "bad anatomy, deformed, extra limbs, blurry, low quality, worst quality, artifacts, flicker";
+        const publicBase = (process.env.APP_PUBLIC_BASE_URL || "http://localhost:8080").replace(/\/+$/, "");
+        const absoluteImageUrl = (job.image_url || "").startsWith("http")
+            ? job.image_url
+            : `${publicBase}${job.image_url}`;
 
         const created = await createKlingJob({
-            imageUrl: job.image_url,
+            imageUrl: absoluteImageUrl,
             prompt,
             negativePrompt,
             callbackUrl
