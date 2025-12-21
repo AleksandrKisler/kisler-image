@@ -28,14 +28,10 @@ async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
         const duration = 5;
         const aspectRatio = process.env.GENAPI_ASPECT_RATIO || "1:1";
         const motionStrength = Number(process.env.GENAPI_MOTION_STRENGTH || 0.4);
-        const typedImage = {
-            type: "url",
-            value: imageUrl
-        };
 
         const payload = {
             // Root-level fields (required by GenAPI validator)
-            image_url: typedImage,
+            image_url: imageUrl,
             prompt: String(prompt || "").trim(),
             negative_prompt: String(negativePrompt || "").trim(),
             duration,
@@ -45,7 +41,7 @@ async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
 
             // Also provide under `input` (in case model schema uses wrapper)
             input: {
-                image_url: typedImage,
+                image_url: imageUrl,
                 prompt: String(prompt || "").trim(),
                 negative_prompt: String(negativePrompt || "").trim(),
                 duration,
