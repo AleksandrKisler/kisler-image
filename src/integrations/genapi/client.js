@@ -27,7 +27,6 @@ async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
         const url = `/api/v1/networks/${modelId}`;
         const duration = 5;
         const aspectRatio = process.env.GENAPI_ASPECT_RATIO || "16:9";
-        const motionStrength = Number(process.env.GENAPI_MOTION_STRENGTH || 0.4);
 
         const payload = {
             image_url: imageUrl,
@@ -35,7 +34,7 @@ async function createKlingJob({imageUrl, prompt, negativePrompt, callbackUrl}) {
             negative_prompt: String(negativePrompt || "").trim(),
             duration,
             aspect_ratio: aspectRatio,
-            motion_strength: motionStrength,
+            generate_audio: false,
             callback_url: callbackUrl || undefined,
         };
         console.log(
