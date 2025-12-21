@@ -1,0 +1,198 @@
+openapi: 3.0.3
+info:
+  title: Warm Memories API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+paths:
+  /uploads/photo:
+    post:
+      summary: Upload photo (stored locally)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo]
+              properties:
+                photo:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imageUrl: { type: string, example: "/uploads/photos/abc.jpg" }
+
+  /auth/request-code:
+    post:
+      summary: Request OTP code to email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, example: user@example.com }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+  /auth/verify-code:
+    post:
+      summary: Verify OTP code and get JWT token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, example: user@example.com }
+                code: { type: string, example: "123456" }
+      responses:
+        "200":
+          description: session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      email: { type: string }
+                      tokenBalance: { type: integer }
+  /me:
+    get:
+      summary: Get current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: me
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  email: { type: string }
+                  tokenBalance: { type: integer }
+  /plans:
+    get:
+      summary: Get fixed plans and emotions (product constraints)
+      responses:
+        "200":
+          description: plans
+  /jobs:
+    get:
+      summary: List jobs for current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: list }
+    post:
+      summary: Create job (image -> 5s video, fixed emotions)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imageUrl, emotionCode]
+              properties:
+                imageUrl: { type: string, example: "https://example.com/photo.jpg" }
+                emotionCode: { type: string, enum: [smile, blink, surprised] }
+                params: { type: object }
+      responses:
+        "402":
+          description: insufficient tokens
+                "200":
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId: { type: string }
+                  status: { type: string, example: queued }
+  /jobs/{id}:
+    get:
+      summary: Get job by id
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: job }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+
+  /payments/create:
+    post:
+      summary: Create YooKassa payment for a plan
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties:
+                planId: { type: string, enum: [one, three] }
+      responses:
+        "200": { description: created }
+  /payments/{id}:
+    get:
+      summary: Get internal payment status
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: payment }
+  /payments/{id}/refresh:
+    post:
+      summary: Refresh payment status from YooKassa
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: ok }
+  /yookassa/webhook:
+    post:
+      summary: YooKassa incoming notification (webhook)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200": { description: ok }
