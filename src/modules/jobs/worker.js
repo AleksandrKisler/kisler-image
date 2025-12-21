@@ -146,7 +146,18 @@ async function runOnce() {
                 await db("jobs").where({ id: job.id }).update({ updated_at: new Date().toISOString() });
             }
 
-            const st = await getRequestStatus(providerRequestId);
+            let st;
+            try {
+                st = await getRequestStatus(providerRequestId);
+            } catch (e) {
+                // ✅ FIX: статус может временно не находиться (или мы подбираем endpoint)
+                // не валим job сразу.
+                if (e.code === "GENAPI_STATUS_404" || e.response?.status === 404) {
+                    console.warn("[worker] GenAPI status 404, retrying… job", job.id);
+                    continue;
+                }
+                throw e;
+            }
 
             const status = st?.status;
 

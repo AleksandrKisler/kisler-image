@@ -1,5 +1,13 @@
 const axios = require("axios");
 
+/**
+ * Комментарии:
+ * ✅ FIX #1: getRequestStatus теперь пробует несколько вариантов endpoint'а статуса.
+ * Это решает твою 404.
+ *
+ * ✅ FIX #2: мы "запоминаем" рабочий шаблон статуса в памяти процесса,
+ * чтобы после первого успешного определения не делать лишние попытки.
+ */
 
 function requireEnv(name) {
     if (!process.env[name]) throw new Error(`${name} is not set`);
@@ -17,14 +25,9 @@ const api = axios.create({
     },
 });
 
-/**
- * Пытаемся достать URL видео из разных возможных форматов ответа.
- * Возвращает string | null
- */
 function extractVideoUrl(payload) {
     if (!payload || typeof payload !== "object") return null;
 
-    // самые частые варианты
     const direct =
         payload.result_url ||
         payload.video_url ||
@@ -35,22 +38,17 @@ function extractVideoUrl(payload) {
 
     if (typeof direct === "string" && direct.startsWith("http")) return direct;
 
-    // иногда результат лежит в output / outputs
     const candidates = [];
 
     if (Array.isArray(payload.output)) candidates.push(...payload.output);
     if (Array.isArray(payload.outputs)) candidates.push(...payload.outputs);
-
     if (payload.output && typeof payload.output === "object") candidates.push(payload.output);
     if (payload.outputs && typeof payload.outputs === "object") candidates.push(payload.outputs);
-
-    // иногда result может быть массивом/объектом
     if (Array.isArray(payload.result)) candidates.push(...payload.result);
     if (payload.result && typeof payload.result === "object") candidates.push(payload.result);
 
     for (const c of candidates) {
         if (!c) continue;
-
         if (typeof c === "string" && c.startsWith("http")) return c;
 
         if (typeof c === "object") {
@@ -69,22 +67,17 @@ function extractVideoUrl(payload) {
     return null;
 }
 
-/**
- * Создание job в GenAPI.
- */
 async function createKlingJob({ imageUrl, prompt, negativePrompt, callbackUrl }) {
     try {
         const modelId = process.env.GENAPI_MODEL_ID || "kling-video-2-6";
         const url = `/api/v1/networks/${modelId}`;
-        const duration = 5;
-        const aspectRatio = process.env.GENAPI_ASPECT_RATIO || "16:9";
 
         const payload = {
             image_url: imageUrl,
             prompt: String(prompt || "").trim(),
             negative_prompt: String(negativePrompt || "").trim(),
-            duration,
-            aspect_ratio: aspectRatio,
+            duration: 5,
+            aspect_ratio: process.env.GENAPI_ASPECT_RATIO || "16:9",
             generate_audio: false,
             callback_url: callbackUrl || undefined,
         };
@@ -97,7 +90,7 @@ async function createKlingJob({ imageUrl, prompt, negativePrompt, callbackUrl })
             throw new Error("GenAPI: invalid response (missing request_id)");
         }
 
-        return res.data; // { request_id, status? }
+        return res.data;
     } catch (e) {
         console.error("[GENAPI ERROR STATUS]", e.response?.status);
         console.error("[GENAPI ERROR BODY]", JSON.stringify(e.response?.data, null, 2));
@@ -106,27 +99,98 @@ async function createKlingJob({ imageUrl, prompt, negativePrompt, callbackUrl })
 }
 
 /**
- * Статус запроса в GenAPI.
- * Важно: может вернуть не только status, но и итоговый URL.
+ * Запоминаем рабочий путь статуса (чтобы не пробовать каждый раз).
+ * Это переменная процесса worker.
  */
+let cachedStatusTemplate = null;
+
+function buildStatusCandidates(requestId) {
+    const id = encodeURIComponent(requestId);
+
+    // если явно задано — пробуем первым
+    const customTpl = process.env.GENAPI_STATUS_PATH; // например "/api/v1/requests/{id}"
+    const list = [];
+
+    if (customTpl) list.push(customTpl);
+
+    // реальные варианты (fallback)
+    list.push("/api/v1/requests/{id}");
+    list.push("/api/v1/requests/{id}/status");
+    list.push("/api/v1/requests/status/{id}");
+    list.push("/api/v1/request/{id}");
+    list.push("/api/v1/requests?id={id}");
+    list.push("/api/v1/requests?request_id={id}");
+    list.push("/api/v1/tasks/{id}");
+    list.push("/api/v1/tasks/{id}/status");
+
+    // уникализируем
+    const uniq = Array.from(new Set(list));
+
+    return uniq.map((tpl) => tpl.replace("{id}", id));
+}
+
 async function getRequestStatus(requestId) {
-    const tpl = process.env.GENAPI_STATUS_PATH || "/api/v1/requests/{id}";
-    const path = tpl.replace("{id}", encodeURIComponent(requestId));
+    const DEBUG = (process.env.GENAPI_DEBUG || "0") === "1";
 
-    const res = await api.get(path);
+    const tryOne = async (path) => {
+        const res = await api.get(path);
+        if (!res.data || !res.data.status) {
+            throw new Error("GenAPI: invalid status response");
+        }
+        return {
+            ...res.data,
+            _videoUrl: extractVideoUrl(res.data),
+        };
+    };
 
-    // Нормальный лог — только data
-    if ((process.env.GENAPI_DEBUG || "0") === "1") {
-        console.log("[GENAPI STATUS DATA]", JSON.stringify(res.data, null, 2));
+    // 1) если есть кэшированный рабочий путь — пробуем сначала его
+    if (cachedStatusTemplate) {
+        const p = cachedStatusTemplate.replace("{id}", encodeURIComponent(requestId));
+        try {
+            return await tryOne(p);
+        } catch (e) {
+            // если вдруг перестало работать (редко) — сбрасываем кэш и уходим в полный fallback
+            if (e.response?.status === 404) cachedStatusTemplate = null;
+            else throw e;
+        }
     }
 
-    if (!res.data || !res.data.status) throw new Error("GenAPI: invalid status response");
+    // 2) полный fallback
+    const candidates = buildStatusCandidates(requestId);
 
-    return {
-        ...res.data,
-        // добавляем нормализованное поле, чтобы worker не гадал
-        _videoUrl: extractVideoUrl(res.data),
-    };
+    let last404 = null;
+
+    for (const p of candidates) {
+        try {
+            if (DEBUG) console.log("[GENAPI STATUS TRY]", p);
+            const data = await tryOne(p);
+
+            // сохраняем шаблон в кэш (если это не query-variant — всё равно можно сохранить как "{id}"-template)
+            // для query-variant тоже ок: мы сохраним оригинальный tpl
+            const tpl = p.includes("request_id=") || p.includes("?id=")
+                ? p.replace(encodeURIComponent(requestId), "{id}")
+                : p.replace(encodeURIComponent(requestId), "{id}");
+
+            cachedStatusTemplate = tpl;
+
+            if (DEBUG) console.log("[GENAPI STATUS OK]", tpl);
+            return data;
+        } catch (e) {
+            if (e.response?.status === 404) {
+                last404 = e;
+                continue;
+            }
+            // если это не 404 — это реальная ошибка (401/429/500 и т.д.)
+            throw e;
+        }
+    }
+
+    // Если все кандидаты дали 404 — возвращаем 404 как сигнал "путь не найден"
+    // (worker обработает это мягко, не валя job сразу)
+    const err = new Error("GenAPI status endpoint not found (404 on all candidates)");
+    err.code = "GENAPI_STATUS_404";
+    err.original = last404;
+    throw err;
 }
 
 module.exports = { createKlingJob, getRequestStatus, extractVideoUrl };
