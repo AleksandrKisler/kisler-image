@@ -56,6 +56,7 @@ async function migrate() {
             t.text("status").notNullable();
             t.text("result_video_url");
             t.text("error_message");
+            t.text("provider_status");
             t.text("refunded_at");
             t.text("created_at").notNullable();
             t.text("updated_at");
