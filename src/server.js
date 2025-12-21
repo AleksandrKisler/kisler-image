@@ -1,4 +1,8 @@
-const { app } = require("./app");
+const { createApp } = require("./app");
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log("[api] listening on", port));
+const app = createApp();
+
+app.listen(port, () => {
+    console.log("[api] listening on", port);
+});
