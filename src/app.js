@@ -3,6 +3,16 @@ const express = require("express");
 const path = require("path");
 const swaggerUi = require("swagger-ui-express");
 const YAML = require("yamljs");
+const cors = require('cors');
+
+const corsOptions = {
+    origin: process.env.ALLOWED_ORIGINS?.split(','),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+app.use(cors(corsOptions));
 
 const { createAuthRouter } = require("./modules/auth/auth.router");
 const { jobsRouter } = require("./modules/jobs/jobs.router");
