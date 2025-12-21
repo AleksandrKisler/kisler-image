@@ -85,18 +85,25 @@ async function runOnce() {
         // Polling fallback (in case callback is not delivered)
         while (true) {
             await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-            const st = await getRequestStatus(created.request_id);
+            let st;
+            try {
+                st = await getRequestStatus(created.request_id);
+            } catch (e) {
+                if (e.response?.status === 404) {
+                    console.warn("[poll] GenAPI request not found (404), waiting for webhook");
+                    continue;
+                }
+                downloadToLocal
+                throw e;
+            }
 
             if (st.status === "processing") continue;
 
             if (st.status === "failed") {
-                await db("jobs").where({id: job.id}).update({
-                    status: "failed",
-                    error_message: st.error || "GenAPI failed",
-                    updated_at: new Date().toISOString()
-                });
-                await markJobFailedAndRefund(job.id, st.error || "GenAPI failed");
-                return;
+                console.warn(
+                    "[poll] GenAPI reports failed, waiting for webhook to finalize job"
+                );
+                continue;
             }
 
             if (st.status === "success") {
@@ -104,7 +111,12 @@ async function runOnce() {
                 const resultUrl = st.result_url || st.video_url || st.url;
                 if (!resultUrl) throw new Error("GenAPI success without result_url");
 
-                await downloadToLocal(resultUrl, outPath);
+                try {
+                    await downloadToLocal(resultUrl, outPath);
+                } catch (e) {
+                    console.warn("[download] failed, will retry via webhook", e.response?.status);
+                    return; // webhook позже сохранит видео
+                }
 
                 await db("jobs").where({id: job.id}).update({
                     status: "completed",
