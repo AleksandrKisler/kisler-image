@@ -12,7 +12,6 @@ const corsOptions = {
     allowedHeaders: ['Content-Type', 'Authorization']
 };
 
-app.use(cors(corsOptions));
 
 const { createAuthRouter } = require("./modules/auth/auth.router");
 const { jobsRouter } = require("./modules/jobs/jobs.router");
@@ -25,6 +24,7 @@ const { yookassaRouter } = require("./modules/yookassa/yookassa.router");
 const { uploadsRouter } = require("./modules/uploads/uploads.router");
 
 const app = express();
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "5mb" }));
 
 app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
