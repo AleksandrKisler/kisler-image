@@ -11,10 +11,7 @@ async function failStuckJobs(db) {
 
     for (const job of stuck) {
         console.error("[timeout] job stuck → fail:", job.id);
-        await markJobFailedAndRefund(
-            job.id,
-            "SOFT: Processing timeout — webhook not received"
-        );
+        await markJobFailedAndRefund(job.id, "Processing timeout — provider did not complete in time");
     }
 }
 

@@ -1,12 +1,10 @@
 const axios = require("axios");
 
 /**
- * Комментарии:
- * ✅ FIX #1: getRequestStatus теперь пробует несколько вариантов endpoint'а статуса.
- * Это решает твою 404.
- *
- * ✅ FIX #2: мы "запоминаем" рабочий шаблон статуса в памяти процесса,
- * чтобы после первого успешного определения не делать лишние попытки.
+ * Что исправлено:
+ * ✅ убран console.log(res)
+ * ✅ добавлен extractVideoUrl() — GenAPI часто возвращает результат в разных полях
+ * ✅ getRequestStatus() теперь пробует несколько endpoint'ов статуса и кэширует рабочий
  */
 
 function requireEnv(name) {
@@ -15,6 +13,7 @@ function requireEnv(name) {
 }
 
 const baseURL = process.env.GENAPI_BASE_URL || "https://api.gen-api.ru";
+
 const api = axios.create({
     baseURL,
     timeout: 90_000,
@@ -44,11 +43,13 @@ function extractVideoUrl(payload) {
     if (Array.isArray(payload.outputs)) candidates.push(...payload.outputs);
     if (payload.output && typeof payload.output === "object") candidates.push(payload.output);
     if (payload.outputs && typeof payload.outputs === "object") candidates.push(payload.outputs);
+
     if (Array.isArray(payload.result)) candidates.push(...payload.result);
     if (payload.result && typeof payload.result === "object") candidates.push(payload.result);
 
     for (const c of candidates) {
         if (!c) continue;
+
         if (typeof c === "string" && c.startsWith("http")) return c;
 
         if (typeof c === "object") {
@@ -82,7 +83,9 @@ async function createKlingJob({ imageUrl, prompt, negativePrompt, callbackUrl })
             callback_url: callbackUrl || undefined,
         };
 
-        console.log("[GENAPI PAYLOAD]", JSON.stringify(payload, null, 2));
+        if ((process.env.GENAPI_DEBUG || "0") === "1") {
+            console.log("[GENAPI PAYLOAD]", JSON.stringify(payload, null, 2));
+        }
 
         const res = await api.post(url, payload);
 
@@ -90,7 +93,7 @@ async function createKlingJob({ imageUrl, prompt, negativePrompt, callbackUrl })
             throw new Error("GenAPI: invalid response (missing request_id)");
         }
 
-        return res.data;
+        return res.data; // { request_id, status? }
     } catch (e) {
         console.error("[GENAPI ERROR STATUS]", e.response?.status);
         console.error("[GENAPI ERROR BODY]", JSON.stringify(e.response?.data, null, 2));
@@ -98,35 +101,24 @@ async function createKlingJob({ imageUrl, prompt, negativePrompt, callbackUrl })
     }
 }
 
-/**
- * Запоминаем рабочий путь статуса (чтобы не пробовать каждый раз).
- * Это переменная процесса worker.
- */
 let cachedStatusTemplate = null;
 
 function buildStatusCandidates(requestId) {
     const id = encodeURIComponent(requestId);
-
-    // если явно задано — пробуем первым
-    const customTpl = process.env.GENAPI_STATUS_PATH; // например "/api/v1/requests/{id}"
     const list = [];
 
-    if (customTpl) list.push(customTpl);
+    if (process.env.GENAPI_STATUS_PATH) list.push(process.env.GENAPI_STATUS_PATH);
 
-    // реальные варианты (fallback)
+    // fallback варианты
     list.push("/api/v1/requests/{id}");
     list.push("/api/v1/requests/{id}/status");
     list.push("/api/v1/requests/status/{id}");
-    list.push("/api/v1/request/{id}");
-    list.push("/api/v1/requests?id={id}");
-    list.push("/api/v1/requests?request_id={id}");
     list.push("/api/v1/tasks/{id}");
     list.push("/api/v1/tasks/{id}/status");
+    list.push("/api/v1/requests?request_id={id}");
+    list.push("/api/v1/requests?id={id}");
 
-    // уникализируем
-    const uniq = Array.from(new Set(list));
-
-    return uniq.map((tpl) => tpl.replace("{id}", id));
+    return Array.from(new Set(list)).map((tpl) => tpl.replace("{id}", id));
 }
 
 async function getRequestStatus(requestId) {
@@ -134,62 +126,37 @@ async function getRequestStatus(requestId) {
 
     const tryOne = async (path) => {
         const res = await api.get(path);
-        if (!res.data || !res.data.status) {
-            throw new Error("GenAPI: invalid status response");
-        }
-        return {
-            ...res.data,
-            _videoUrl: extractVideoUrl(res.data),
-        };
+        if (!res.data || !res.data.status) throw new Error("GenAPI: invalid status response");
+        return { ...res.data, _videoUrl: extractVideoUrl(res.data) };
     };
 
-    // 1) если есть кэшированный рабочий путь — пробуем сначала его
     if (cachedStatusTemplate) {
         const p = cachedStatusTemplate.replace("{id}", encodeURIComponent(requestId));
         try {
             return await tryOne(p);
         } catch (e) {
-            // если вдруг перестало работать (редко) — сбрасываем кэш и уходим в полный fallback
             if (e.response?.status === 404) cachedStatusTemplate = null;
             else throw e;
         }
     }
 
-    // 2) полный fallback
     const candidates = buildStatusCandidates(requestId);
-
-    let last404 = null;
 
     for (const p of candidates) {
         try {
             if (DEBUG) console.log("[GENAPI STATUS TRY]", p);
             const data = await tryOne(p);
-
-            // сохраняем шаблон в кэш (если это не query-variant — всё равно можно сохранить как "{id}"-template)
-            // для query-variant тоже ок: мы сохраним оригинальный tpl
-            const tpl = p.includes("request_id=") || p.includes("?id=")
-                ? p.replace(encodeURIComponent(requestId), "{id}")
-                : p.replace(encodeURIComponent(requestId), "{id}");
-
-            cachedStatusTemplate = tpl;
-
-            if (DEBUG) console.log("[GENAPI STATUS OK]", tpl);
+            cachedStatusTemplate = p.replace(encodeURIComponent(requestId), "{id}");
+            if (DEBUG) console.log("[GENAPI STATUS OK]", cachedStatusTemplate);
             return data;
         } catch (e) {
-            if (e.response?.status === 404) {
-                last404 = e;
-                continue;
-            }
-            // если это не 404 — это реальная ошибка (401/429/500 и т.д.)
+            if (e.response?.status === 404) continue;
             throw e;
         }
     }
 
-    // Если все кандидаты дали 404 — возвращаем 404 как сигнал "путь не найден"
-    // (worker обработает это мягко, не валя job сразу)
     const err = new Error("GenAPI status endpoint not found (404 on all candidates)");
     err.code = "GENAPI_STATUS_404";
-    err.original = last404;
     throw err;
 }
 

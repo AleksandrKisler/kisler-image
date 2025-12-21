@@ -8,19 +8,18 @@ const { failStuckJobs } = require("./jobTimeout");
 const { markJobFailedAndRefund } = require("./markFailedAndRefund");
 
 /**
- * Комментарии (по уму + совместимость):
- *
- * ✅ По уму: новые job создаются как `queued` (см. jobs.router.js)
- * ✅ Совместимость: worker также подхватывает "старые/сломанные" job,
- *    которые уже `processing`, но provider_job_id ещё NULL.
- *
- * Это позволяет:
- * - не потерять старые задачи
- * - плавно мигрировать прод без ручной чистки БД
+ * Что исправлено:
+ * ✅ worker теперь ДОВОДИТ job до completed/failed
+ * ✅ пишет provider_status во время polling
+ * ✅ скачивает видео в public/uploads/videos и пишет result_video_url
+ * ✅ keepalive обновляет updated_at, чтобы timeout не убивал живую задачу
+ * ✅ поддержка кейса: status=success, но url появится чуть позже (ждём)
+ * ✅ берём job из queued (и как совместимость — processing без provider_job_id)
  */
 
 const POLL_INTERVAL_MS = 4000;
 const KEEPALIVE_EVERY_MS = 20_000;
+const SUCCESS_NO_URL_MAX_TRIES = Number(process.env.SUCCESS_NO_URL_MAX_TRIES || 30);
 
 function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -41,22 +40,25 @@ function guessExtByContentType(contentType) {
 
 async function downloadToFile(url, absPath) {
     const res = await axios.get(url, { responseType: "stream", timeout: 180_000 });
-
     await new Promise((resolve, reject) => {
         const ws = fs.createWriteStream(absPath);
         res.data.pipe(ws);
         ws.on("finish", resolve);
         ws.on("error", reject);
     });
-
     return res.headers?.["content-type"] || null;
 }
 
-/**
- * Берём задачу на старт:
- * - queued (правильный поток)
- * - ИЛИ processing без provider_job_id (совместимость/спасение зависших)
- */
+function normalizeProviderStatus(raw) {
+    const s = String(raw || "").toLowerCase().trim();
+    if (!s) return "";
+    if (["processing", "pending", "queued", "running", "in_progress"].includes(s)) return "processing";
+    if (["failed", "error", "canceled", "cancelled"].includes(s)) return "failed";
+    if (["success", "succeeded", "completed", "done", "ok", "finish", "finished"].includes(s)) return "success";
+    if (s.startsWith("success")) return "success";
+    return s;
+}
+
 async function takeOneStartableJob(db) {
     const now = new Date().toISOString();
 
@@ -69,15 +71,11 @@ async function takeOneStartableJob(db) {
 
         if (!job) return null;
 
-        // “захват” — ставим processing (если был queued) и обновляем updated_at
         const updated = await trx("jobs")
             .where({ id: job.id })
             .whereIn("status", ["queued", "processing"])
             .whereNull("provider_job_id")
-            .update({
-                status: "processing",
-                updated_at: now,
-            });
+            .update({ status: "processing", updated_at: now });
 
         if (!updated) return null;
 
@@ -87,7 +85,6 @@ async function takeOneStartableJob(db) {
 
 async function runOnce() {
     const db = getDb();
-
     await failStuckJobs(db);
 
     const job = await takeOneStartableJob(db);
@@ -116,7 +113,6 @@ async function runOnce() {
 
     try {
         console.log("[worker] start job", job.id);
-        console.log("[worker] image:", absoluteImageUrl);
 
         const created = await createKlingJob({
             imageUrl: absoluteImageUrl,
@@ -127,16 +123,15 @@ async function runOnce() {
 
         const providerRequestId = String(created.request_id);
 
-        await db("jobs")
-            .where({ id: job.id })
-            .update({
-                provider: "genapi",
-                provider_job_id: providerRequestId,
-                provider_status: created.status || "processing",
-                updated_at: new Date().toISOString(),
-            });
+        await db("jobs").where({ id: job.id }).update({
+            provider: "genapi",
+            provider_job_id: providerRequestId,
+            provider_status: created.status || "processing",
+            updated_at: new Date().toISOString(),
+        });
 
         let lastKeepaliveAt = Date.now();
+        let successNoUrlTries = 0;
 
         while (true) {
             await sleep(POLL_INTERVAL_MS);
@@ -150,27 +145,21 @@ async function runOnce() {
             try {
                 st = await getRequestStatus(providerRequestId);
             } catch (e) {
-                // ✅ FIX: статус может временно не находиться (или мы подбираем endpoint)
-                // не валим job сразу.
                 if (e.code === "GENAPI_STATUS_404" || e.response?.status === 404) {
-                    console.warn("[worker] GenAPI status 404, retrying… job", job.id);
+                    console.warn("[worker] status 404, retry… job", job.id);
                     continue;
                 }
                 throw e;
             }
 
-            const status = st?.status;
+            const status = normalizeProviderStatus(st?.status);
 
-            await db("jobs")
-                .where({ id: job.id })
-                .update({
-                    provider_status: status || null,
-                    updated_at: new Date().toISOString(),
-                });
+            await db("jobs").where({ id: job.id }).update({
+                provider_status: status || null,
+                updated_at: new Date().toISOString(),
+            });
 
             if (!status || status === "processing") continue;
-
-            console.log("[worker] final status =", status, "job", job.id);
 
             if (status === "failed") {
                 const errMsg = st?.error?.message || st?.message || "GenAPI: generation failed";
@@ -180,9 +169,19 @@ async function runOnce() {
 
             if (status === "success") {
                 const remoteUrl = st._videoUrl;
+
+                // success может прийти раньше url — ждём
                 if (!remoteUrl) {
-                    await markJobFailedAndRefund(job.id, "GenAPI success but video URL missing in status payload");
-                    return;
+                    successNoUrlTries += 1;
+                    console.warn(
+                        `[worker] success but no url yet (try ${successNoUrlTries}/${SUCCESS_NO_URL_MAX_TRIES}) job ${job.id}`
+                    );
+
+                    if (successNoUrlTries >= SUCCESS_NO_URL_MAX_TRIES) {
+                        await markJobFailedAndRefund(job.id, "GenAPI success but video URL still missing after retries");
+                        return;
+                    }
+                    continue;
                 }
 
                 const tmpPath = path.join(videoDir, `${job.id}.tmp`);
@@ -191,25 +190,22 @@ async function runOnce() {
 
                 const finalFileName = `${job.id}${ext}`;
                 const finalAbsPath = path.join(videoDir, finalFileName);
-
                 fs.renameSync(tmpPath, finalAbsPath);
 
                 const publicUrl = `/uploads/videos/${finalFileName}`;
 
-                await db("jobs")
-                    .where({ id: job.id })
-                    .update({
-                        status: "completed",
-                        result_video_url: publicUrl,
-                        error_message: null,
-                        updated_at: new Date().toISOString(),
-                    });
+                await db("jobs").where({ id: job.id }).update({
+                    status: "completed",
+                    result_video_url: publicUrl,
+                    error_message: null,
+                    updated_at: new Date().toISOString(),
+                });
 
                 console.log("[worker] completed job", job.id, "→", publicUrl);
                 return;
             }
 
-            console.warn("[worker] unknown status:", status, "job", job.id);
+            console.warn("[worker] unknown status:", st?.status, "job", job.id);
         }
     } catch (e) {
         console.error("[worker] error:", e.message);
