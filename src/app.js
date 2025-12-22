@@ -68,6 +68,7 @@ const { genapiRouter } = require("./modules/genapi/genapi.router");
 const { paymentsRouter } = require("./modules/payments/payments.router");
 const { yookassaRouter } = require("./modules/yookassa/yookassa.router");
 const { uploadsRouter } = require("./modules/uploads/uploads.router");
+const { filesRouter } = require("./modules/files/files.router");
 
 function createApp() {
     const app = express();
@@ -90,6 +91,7 @@ function createApp() {
     app.use("/api/v1/payments", paymentsRouter);
     app.use("/api/v1/yookassa", yookassaRouter);
     app.use("/api/v1/admin", adminRouter);
+    app.use("/api/v1/files", filesRouter);
 
     return app;
 }
