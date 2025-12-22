@@ -1,24 +1,63 @@
 require("dotenv").config();
 const express = require("express");
 const path = require("path");
-const swaggerUi = require("swagger-ui-express");
-const YAML = require("yamljs");
+// const swaggerUi = require("swagger-ui-express");
+// const YAML = require("yamljs");
 
-const corsMiddleware = (req, res, next) => {
-    const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*').split(',');
-    const origin = req.headers.origin;
+function parseAllowedOrigins() {
+    const raw = process.env.ALLOWED_ORIGINS || "*";
+    return raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+}
 
-    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin || '')) {
-        res.setHeader('Access-Control-Allow-Origin', origin || '*');
-    }
+/**
+ * Proper CORS middleware:
+ * - If credentials are allowed -> Access-Control-Allow-Origin must be a конкретный origin
+ * - Supports ALLOWED_ORIGINS="*" meaning "allow any origin" (but still echoes request origin)
+ * - Handles OPTIONS preflight with 204
+ */
+function createCorsMiddleware() {
+    const allowedOrigins = parseAllowedOrigins();
+    const allowAny = allowedOrigins.includes("*");
 
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    return (req, res, next) => {
+        const origin = req.headers.origin;
 
-    if (req.method === 'OPTIONS') return res.sendStatus(200);
-    next();
-};
+        res.setHeader("Vary", "Origin");
+
+        if (origin) {
+            const isAllowed = allowAny || allowedOrigins.includes(origin);
+
+            if (isAllowed) {
+                // IMPORTANT: if we allow credentials, we must echo exact origin (not "*")
+                res.setHeader("Access-Control-Allow-Origin", origin);
+                res.setHeader("Access-Control-Allow-Credentials", "true");
+            }
+        } else if (allowAny) {
+            // Non-browser request (no Origin) — ok
+            res.setHeader("Access-Control-Allow-Origin", "*");
+        }
+
+        res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+
+        const reqHeaders = req.headers["access-control-request-headers"];
+        res.setHeader(
+            "Access-Control-Allow-Headers",
+            reqHeaders ? String(reqHeaders) : "Content-Type, Authorization"
+        );
+
+        res.setHeader("Access-Control-Max-Age", "600");
+
+        if (req.method === "OPTIONS") {
+            // 204 is best practice for preflight
+            return res.sendStatus(204);
+        }
+
+        next();
+    };
+}
 
 const { createAuthRouter } = require("./modules/auth/auth.router");
 const { jobsRouter } = require("./modules/jobs/jobs.router");
@@ -33,7 +72,8 @@ const { uploadsRouter } = require("./modules/uploads/uploads.router");
 function createApp() {
     const app = express();
 
-    app.use(corsMiddleware);
+
+    app.use(createCorsMiddleware());
     app.use(express.json({ limit: "5mb" }));
 
     app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads")));
