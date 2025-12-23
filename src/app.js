@@ -75,7 +75,7 @@ function createApp() {
 
 
     app.use(createCorsMiddleware());
-    app.use(express.json({ limit: "5mb" }));
+    app.use(express.json({ limit: "10mb" }));
 
     app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads")));
 

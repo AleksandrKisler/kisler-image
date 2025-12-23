@@ -98,7 +98,7 @@ async function runOnce() {
 
     const prompts = {
         smile: "Make a natural gentle smile. Subtle facial motion only. 5 seconds.",
-        blink: "Make a natural blink once or twice. Subtle facial motion only. 5 seconds.",
+        blink: "Make a natural blink once or twice with a slight, relaxed smile. Subtle facial motion only. 5 seconds.",
         surprised: "Show mild surprise. Subtle facial motion only. 5 seconds.",
     };
 
