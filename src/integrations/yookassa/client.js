@@ -1,53 +1,87 @@
-const axios = require("axios");
+const { YooCheckout } = require("@a2seven/yoo-checkout");
 const { v4: uuidv4 } = require("uuid");
 
 function requireEnv(name) {
-  if (!process.env[name]) throw new Error(`${name} is not set`);
-  return process.env[name];
-}
-
-function ykApi() {
-  const shopId = requireEnv("YOOKASSA_SHOP_ID");
-  const secretKey = requireEnv("YOOKASSA_SECRET_KEY");
-  const baseURL = process.env.YOOKASSA_API_BASE || "https://api.yookassa.ru";
-
-  return axios.create({
-    baseURL,
-    timeout: 60_000,
-    auth: { username: shopId, password: secretKey },
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    }
-  });
+    const v = process.env[name];
+    if (!v || !String(v).trim()) throw new Error(`${name} is not set`);
+    return String(v).trim();
 }
 
 /**
- * Create payment using YooKassa API v3.
- * Needs Idempotence-Key header for safe retries.
+ * A single YooCheckout client for the whole process.
+ *
+ * SDK uses HTTP Basic Auth:
+ *   username: shopId
+ *   password: secretKey
  */
-async function createPayment({ amountRub, description, returnUrl, metadata }) {
-  const api = ykApi();
-  const idem = uuidv4();
+function getCheckout() {
+    // keep singleton in module scope
+    if (global.__YOOKASSA_CHECKOUT__) return global.__YOOKASSA_CHECKOUT__;
 
-  const body = {
-    amount: { value: amountRub.toFixed(2), currency: "RUB" },
-    capture: true,
-    confirmation: { type: "redirect", return_url: returnUrl },
-    payment_method_data: { type: "bank_card" },
-    description,
-    metadata: metadata || {},
-    test: String(process.env.YOOKASSA_TEST_MODE || "").toLowerCase() === "true",
-  };
+    const checkout = new YooCheckout({
+        shopId: requireEnv("YOOKASSA_SHOP_ID"),
+        secretKey: requireEnv("YOOKASSA_SECRET_KEY"),
+    });
 
-  const res = await api.post("/v3/payments", body, { headers: { "Idempotence-Key": idem } });
-  return { idempotenceKey: idem, payment: res.data };
+    global.__YOOKASSA_CHECKOUT__ = checkout;
+    return checkout;
+}
+
+function formatYooCheckoutError(e) {
+    const msg = e?.message || "YooKassa request failed";
+    const status = e?.response?.status;
+    const data = e?.response?.data;
+    if (!status) return msg;
+    try {
+        return `YooKassa API error: HTTP ${status} — ${JSON.stringify(data)}`;
+    } catch {
+        return `YooKassa API error: HTTP ${status}`;
+    }
+}
+
+/**
+ * Creates payment and returns { idempotenceKey, payment } to keep
+ * backward compatibility with the rest of the code.
+ *
+ * SDK signature:
+ *   checkout.createPayment(payload, idempotenceKey)
+ */
+async function createPayment({ amountRub, description, returnUrl, metadata, paymentMethodType }) {
+    const checkout = getCheckout();
+    const idempotenceKey = uuidv4();
+
+    const body = {
+        amount: { value: Number(amountRub).toFixed(2), currency: "RUB" },
+        capture: true,
+        confirmation: { type: "redirect", return_url: returnUrl },
+        description,
+        metadata: metadata || {},
+    };
+
+    // Optional: allow forcing a specific method (e.g. bank_card)
+    if (paymentMethodType) {
+        body.payment_method_data = { type: paymentMethodType };
+    }
+
+    try {
+        const payment = await checkout.createPayment(body, idempotenceKey);
+        return { idempotenceKey, payment };
+    } catch (e) {
+        const err = new Error(formatYooCheckoutError(e));
+        err.cause = e;
+        throw err;
+    }
 }
 
 async function getPayment(paymentId) {
-  const api = ykApi();
-  const res = await api.get(`/v3/payments/${encodeURIComponent(paymentId)}`);
-  return res.data;
+    const checkout = getCheckout();
+    try {
+        return await checkout.getPayment(paymentId);
+    } catch (e) {
+        const err = new Error(formatYooCheckoutError(e));
+        err.cause = e;
+        throw err;
+    }
 }
 
 module.exports = { createPayment, getPayment };

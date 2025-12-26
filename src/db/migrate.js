@@ -42,6 +42,23 @@ async function migrate() {
         await addColumnIfMissing(db, "auth_email_codes", "attempts", "INTEGER NOT NULL DEFAULT 0");
     }
 
+    const hasRefreshTokens = await db.schema.hasTable("auth_refresh_tokens");
+    if (!hasRefreshTokens) {
+        await db.schema.createTable("auth_refresh_tokens", (t) => {
+            t.text("id").primary();
+            t.text("user_id").notNullable();
+            t.text("token_hash").notNullable();
+            t.text("created_at").notNullable();
+            t.text("expires_at").notNullable();
+            t.text("revoked_at");
+            t.text("replaced_by");
+            t.text("created_ip");
+            t.text("user_agent");
+        });
+        await db.schema.raw("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON auth_refresh_tokens(user_id)");
+        await db.schema.raw("CREATE UNIQUE INDEX IF NOT EXISTS uq_refresh_tokens_hash ON auth_refresh_tokens(token_hash)");
+    }
+
     // jobs
     const hasJobs = await db.schema.hasTable("jobs");
     if (!hasJobs) {
@@ -100,6 +117,8 @@ async function migrate() {
         await addColumnIfMissing(db, "payments", "applied_at", "TEXT");
         await addColumnIfMissing(db, "payments", "idempotence_key", "TEXT");
     }
+
+    await addColumnIfMissing(db, "payments", "error_message", "TEXT");
 
     const hasEvents = await db.schema.hasTable("payment_events");
     if (!hasEvents) {

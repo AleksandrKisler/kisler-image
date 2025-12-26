@@ -11,6 +11,7 @@
     "test": "NODE_ENV=test jest --runInBand"
   },
   "dependencies": {
+    "@a2seven/yoo-checkout": "^1.1.4",
     "axios": "^1.6.8",
     "better-sqlite3": "^9.4.0",
     "cors": "^2.8.5",
