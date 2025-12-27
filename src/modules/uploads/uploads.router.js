@@ -63,8 +63,10 @@ uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
       const parsed = path.parse(req.file.filename);
       filename = `${parsed.name}.jpg`;
       const convertedPath = path.join(photosDir, filename);
-      await sharp(req.file.path).jpeg().toFile(convertedPath);
+      const tempPath = path.join(photosDir, `${parsed.name}-tmp.jpg`);
+      await sharp(req.file.path).jpeg().toFile(tempPath);
       await fs.promises.unlink(req.file.path);
+      await fs.promises.rename(tempPath, convertedPath);
     } catch (err) {
       console.error("Failed to convert uploaded file", err);
       return res.status(500).json({ error: { code: "CONVERSION_FAILED", message: "Could not convert image" } });
