@@ -100,27 +100,24 @@ describe("uploads + token debit", () => {
         expect(newFiles).toHaveLength(0);
     });
 
-    test("tiff uploads are converted to jpeg", async () => {
-        const buffer = await sharp({
-            create: {width: 1, height: 1, channels: 3, background: {r: 255, g: 0, b: 0}}
-        })
-            .tiff()
-            .toBuffer();
+    test("returns 415 and cleans up when conversion fails due to missing decoder", async () => {
+        const uploadsDir = path.join(__dirname, "..", "public", "uploads", "photos");
+        const before = new Set(fs.readdirSync(uploadsDir));
+        const spy = jest.spyOn(sharp.prototype, "toFile").mockRejectedValue(new Error("No decoding plugin installed"));
 
         const res = await request(app)
             .post("/api/v1/uploads/photo")
             .set("Authorization", "Bearer " + token())
-            .attach("photo", buffer, {filename: "tiny.tiff", contentType: "image/tiff"});
+            .attach("photo", Buffer.from([0x00]), {filename: "tiny.heic", contentType: "image/heic"});
 
-        expect(res.statusCode).toBe(200);
-        expect(res.body.imageUrl).toMatch(/\.jpg$/);
+        spy.mockRestore();
 
-        const saved = path.join(__dirname, "..", "public", res.body.imageUrl);
-        expect(fs.existsSync(saved)).toBe(true);
-        const metadata = await sharp(saved).metadata();
-        expect(metadata.format).toBe("jpeg");
+        expect(res.statusCode).toBe(415);
+        expect(res.body.error.code).toBe("UNSUPPORTED_MEDIA_TYPE");
 
-        fs.unlinkSync(saved);
+        const after = fs.readdirSync(uploadsDir);
+        const newFiles = after.filter((f) => !before.has(f));
+        expect(newFiles).toHaveLength(0);
     });
 
     test("failed job refunds token exactly once via webhook", async () => {

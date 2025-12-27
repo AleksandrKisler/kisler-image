@@ -31,7 +31,7 @@ function hasDecoderFor(mime) {
   const formatKey = convertibleFormats[mime];
   if (!formatKey) return true;
   const format = sharp.format[formatKey];
-  return Boolean(format && format.input && format.input.file);
+  return Boolean(format && format.input && (format.input.file || format.input.buffer));
 }
 
 async function cleanup(paths) {
@@ -42,6 +42,11 @@ async function cleanup(paths) {
         .catch(() => {})
     )
   );
+}
+
+function isDecoderError(err) {
+  const message = String(err && err.message).toLowerCase();
+  return message.includes("no decoding plugin installed") || message.includes("heif:");
 }
 
 const storage = multer.diskStorage({
@@ -75,11 +80,6 @@ const upload = multer({
  */
 uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: { code: "BAD_REQUEST", message: "photo file required" } });
-    console.log("Uploaded file:", {
-        path: req.file.path,
-        size: req.file.size,
-        mimetype: req.file.mimetype
-    });
   let filename = req.file.filename;
   const mime = (req.file.mimetype || "").toLowerCase();
   if (["image/heic", "image/heif", "image/tiff", "image/x-tiff"].includes(mime)) {
@@ -90,6 +90,7 @@ uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
         .json({ error: { code: "UNSUPPORTED_MEDIA_TYPE", message: "This server cannot decode the provided image format" } });
     }
     try {
+      await sharp(req.file.path).metadata();
       const parsed = path.parse(req.file.filename);
       filename = `${parsed.name}.jpg`;
       const convertedPath = path.join(photosDir, filename);
@@ -100,6 +101,14 @@ uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
     } catch (err) {
       console.error("Failed to convert uploaded file", err);
       await cleanup([path.join(photosDir, `${path.parse(req.file.filename).name}-tmp.jpg`), req.file.path]);
+      if (isDecoderError(err)) {
+        return res.status(415).json({
+          error: {
+            code: "UNSUPPORTED_MEDIA_TYPE",
+            message: "Decoder for the provided image format is unavailable"
+          }
+        });
+      }
       return res.status(500).json({ error: { code: "CONVERSION_FAILED", message: "Could not convert image" } });
     }
   }
