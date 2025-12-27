@@ -20,6 +20,30 @@ const allowed = String(
 const photosDir = path.join(__dirname, "../../../public/uploads/photos");
 fs.mkdirSync(photosDir, { recursive: true });
 
+const convertibleFormats = {
+  "image/heic": "heif",
+  "image/heif": "heif",
+  "image/tiff": "tiff",
+  "image/x-tiff": "tiff"
+};
+
+function hasDecoderFor(mime) {
+  const formatKey = convertibleFormats[mime];
+  if (!formatKey) return true;
+  const format = sharp.format[formatKey];
+  return Boolean(format && format.input && format.input.file);
+}
+
+async function cleanup(paths) {
+  await Promise.allSettled(
+    paths.filter(Boolean).map((p) =>
+      fs.promises
+        .unlink(p)
+        .catch(() => {})
+    )
+  );
+}
+
 const storage = multer.diskStorage({
   destination: function (_req, _file, cb) {
     cb(null, photosDir);
@@ -59,6 +83,12 @@ uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
   let filename = req.file.filename;
   const mime = (req.file.mimetype || "").toLowerCase();
   if (["image/heic", "image/heif", "image/tiff", "image/x-tiff"].includes(mime)) {
+    if (!hasDecoderFor(mime)) {
+      await cleanup([req.file.path]);
+      return res
+        .status(415)
+        .json({ error: { code: "UNSUPPORTED_MEDIA_TYPE", message: "This server cannot decode the provided image format" } });
+    }
     try {
       const parsed = path.parse(req.file.filename);
       filename = `${parsed.name}.jpg`;
@@ -69,6 +99,7 @@ uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
       await fs.promises.rename(tempPath, convertedPath);
     } catch (err) {
       console.error("Failed to convert uploaded file", err);
+      await cleanup([path.join(photosDir, `${path.parse(req.file.filename).name}-tmp.jpg`), req.file.path]);
       return res.status(500).json({ error: { code: "CONVERSION_FAILED", message: "Could not convert image" } });
     }
   }
