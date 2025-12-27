@@ -21,7 +21,7 @@ if (!shopId || !secretKey) {
 }
 
 // ВАЖНО: никаких token (OAuth) тут не должно быть
-const checkout = new YooCheckout({ shopId, secretKey })
+const _checkout = new YooCheckout({ shopId, secretKey })
 
 function formatYooCheckoutError(e) {
     const msg = e?.message || "YooKassa request failed";
@@ -70,9 +70,8 @@ async function createPayment({ amountRub, description, returnUrl, metadata, paym
 }
 
 async function getPayment(paymentId) {
-    const checkout = getCheckout();
     try {
-        return await checkout.getPayment(paymentId);
+        return await _checkout.getPayment(paymentId);
     } catch (e) {
         const err = new Error(formatYooCheckoutError(e));
         err.cause = e;
