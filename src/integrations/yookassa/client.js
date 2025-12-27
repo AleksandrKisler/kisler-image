@@ -7,27 +7,39 @@ function requireEnv(name) {
     return String(v).trim();
 }
 
-const shopId = process.env.YOOKASSA_SHOP_ID;
-const secretKey = process.env.YOOKASSA_SECRET_KEY;
-/**
- * A single YooCheckout client for the whole process.
- *
- * SDK uses HTTP Basic Auth:
- *   username: shopId
- *   password: secretKey
- */
-if (!shopId || !secretKey) {
-    throw new Error('YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY not set');
+// very light heuristic to detect that someone pasted OAuth instead of secret key
+function looksLikeOAuthToken(s) {
+    const v = String(s || "").trim();
+    // OAuth tokens are often long; secret keys usually look like test_/live_... from LK.
+    // We only warn/throw if it is obviously "Bearer ..." or jwt-like.
+    if (/^Bearer\s+/i.test(v)) return true;
+    if (v.split(".").length === 3 && v.length > 60) return true; // JWT-like
+    return false;
 }
 
-// ВАЖНО: никаких token (OAuth) тут не должно быть
-const _checkout = new YooCheckout({ shopId, secretKey })
+let _checkout = null;
+
+function getCheckout() {
+    if (_checkout) return _checkout;
+
+    const shopId = requireEnv("YOOKASSA_SHOP_ID");
+    const secretKey = requireEnv("YOOKASSA_SECRET_KEY");
+
+    if (looksLikeOAuthToken(secretKey)) {
+        throw new Error(
+            "YOOKASSA_SECRET_KEY looks like an OAuth/Bearer token. For /v3/payments you must use SECRET KEY from LK (Integration → API Keys)."
+        );
+    }
+
+    // SDK uses HTTP Basic Auth for shopId+secretKey (payments).
+    _checkout = new YooCheckout({ shopId, secretKey });
+    return _checkout;
+}
 
 function formatYooCheckoutError(e) {
-    const msg = e?.message || "YooKassa request failed";
     const status = e?.response?.status;
     const data = e?.response?.data;
-    if (!status) return msg;
+    if (!status) return e?.message || "YooKassa request failed";
     try {
         return `YooKassa API error: HTTP ${status} — ${JSON.stringify(data)}`;
     } catch {
@@ -35,15 +47,8 @@ function formatYooCheckoutError(e) {
     }
 }
 
-/**
- * Creates payment and returns { idempotenceKey, payment } to keep
- * backward compatibility with the rest of the code.
- *
- * SDK signature:
- *   checkout.createPayment(payload, idempotenceKey)
- */
 async function createPayment({ amountRub, description, returnUrl, metadata, paymentMethodType }) {
-    const checkout = _checkout;
+    const checkout = getCheckout();
     const idempotenceKey = uuidv4();
 
     const body = {
@@ -54,7 +59,6 @@ async function createPayment({ amountRub, description, returnUrl, metadata, paym
         metadata: metadata || {},
     };
 
-    // Optional: allow forcing a specific method (e.g. bank_card)
     if (paymentMethodType) {
         body.payment_method_data = { type: paymentMethodType };
     }
@@ -70,8 +74,9 @@ async function createPayment({ amountRub, description, returnUrl, metadata, paym
 }
 
 async function getPayment(paymentId) {
+    const checkout = getCheckout();
     try {
-        return await _checkout.getPayment(paymentId);
+        return await checkout.getPayment(paymentId);
     } catch (e) {
         const err = new Error(formatYooCheckoutError(e));
         err.cause = e;

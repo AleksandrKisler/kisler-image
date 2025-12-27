@@ -80,6 +80,16 @@ paymentsRouter.post("/create", async (req, res) => {
     const returnUrl =
         process.env.YOOKASSA_RETURN_URL || "http://localhost:5173/payment/return";
 
+    if (/\/api\/v1\/yookassa\/webhook/i.test(returnUrl) || /\/yookassa\/webhook/i.test(returnUrl)) {
+        return res.status(500).json({
+            error: {
+                code: "CONFIG_ERROR",
+                message:
+                    "YOOKASSA_RETURN_URL настроен неверно: это webhook. return_url должен вести на страницу фронта, а webhook настраивается отдельно в личном кабинете ЮKassa."
+            }
+        });
+    }
+
     const description = `Kisler Photo: ${plan.title}`;
 
     // Create internal record first
