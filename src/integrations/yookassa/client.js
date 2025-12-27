@@ -43,7 +43,7 @@ function formatYooCheckoutError(e) {
  *   checkout.createPayment(payload, idempotenceKey)
  */
 async function createPayment({ amountRub, description, returnUrl, metadata, paymentMethodType }) {
-    const checkout = getCheckout();
+    const checkout = _checkout;
     const idempotenceKey = uuidv4();
 
     const body = {
