@@ -21,7 +21,6 @@ function parseAllowedOrigins() {
 function createCorsMiddleware() {
     const allowedOrigins = parseAllowedOrigins();
     const allowAny = allowedOrigins.includes("*");
-
     return (req, res, next) => {
         const origin = req.headers.origin;
 

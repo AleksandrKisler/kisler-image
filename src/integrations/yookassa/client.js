@@ -7,6 +7,8 @@ function requireEnv(name) {
     return String(v).trim();
 }
 
+const shopId = process.env.YOOKASSA_SHOP_ID;
+const secretKey = process.env.YOOKASSA_SECRET_KEY;
 /**
  * A single YooCheckout client for the whole process.
  *
@@ -14,18 +16,12 @@ function requireEnv(name) {
  *   username: shopId
  *   password: secretKey
  */
-function getCheckout() {
-    // keep singleton in module scope
-    if (global.__YOOKASSA_CHECKOUT__) return global.__YOOKASSA_CHECKOUT__;
-
-    const checkout = new YooCheckout({
-        shopId: requireEnv("YOOKASSA_SHOP_ID"),
-        secretKey: requireEnv("YOOKASSA_SECRET_KEY"),
-    });
-
-    global.__YOOKASSA_CHECKOUT__ = checkout;
-    return checkout;
+if (!shopId || !secretKey) {
+    throw new Error('YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY not set');
 }
+
+// ВАЖНО: никаких token (OAuth) тут не должно быть
+const checkout = new YooCheckout({ shopId, secretKey })
 
 function formatYooCheckoutError(e) {
     const msg = e?.message || "YooKassa request failed";
@@ -84,4 +80,4 @@ async function getPayment(paymentId) {
     }
 }
 
-module.exports = { createPayment, getPayment };
+module.exports = { createPayment, getPayment: checkout };
