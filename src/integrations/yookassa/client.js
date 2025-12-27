@@ -1,3 +1,4 @@
+const axios = require("axios");
 const { YooCheckout } = require("@a2seven/yoo-checkout");
 const { v4: uuidv4 } = require("uuid");
 
@@ -17,23 +18,42 @@ function looksLikeOAuthToken(s) {
     return false;
 }
 
-let _checkout = null;
+const DEFAULT_API_BASE = "https://api.yookassa.ru";
 
-function getCheckout() {
-    if (_checkout) return _checkout;
+let _client = null;
+
+function getClient() {
+    if (_client) return _client;
 
     const shopId = requireEnv("YOOKASSA_SHOP_ID");
-    const secretKey = requireEnv("YOOKASSA_SECRET_KEY");
+    const secretKey = String(process.env.YOOKASSA_SECRET_KEY || "").trim();
+    const oauthToken = String(process.env.YOOKASSA_OAUTH_TOKEN || "").trim();
+    const apiBase = String(process.env.YOOKASSA_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
 
-    if (looksLikeOAuthToken(secretKey)) {
-        throw new Error(
-            "YOOKASSA_SECRET_KEY looks like an OAuth/Bearer token. For /v3/payments you must use SECRET KEY from LK (Integration → API Keys)."
-        );
+    // OAuth is required for marketplace/partner integrations. When a bearer token is supplied we switch to OAuth mode.
+    if (oauthToken || looksLikeOAuthToken(secretKey)) {
+        const token = oauthToken || secretKey;
+        _client = {
+            mode: "oauth",
+            shopId,
+            oauth: token,
+            http: axios.create({
+                baseURL: `${apiBase}/v3`,
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            }),
+        };
+        return _client;
+    }
+
+    if (!secretKey) {
+        throw new Error("YOOKASSA_SECRET_KEY is not set");
     }
 
     // SDK uses HTTP Basic Auth for shopId+secretKey (payments).
-    _checkout = new YooCheckout({ shopId, secretKey });
-    return _checkout;
+    _client = { mode: "basic", checkout: new YooCheckout({ shopId, secretKey, apiUrl: apiBase }) };
+    return _client;
 }
 
 function formatYooCheckoutError(e) {
@@ -48,7 +68,7 @@ function formatYooCheckoutError(e) {
 }
 
 async function createPayment({ amountRub, description, returnUrl, metadata, paymentMethodType }) {
-    const checkout = getCheckout();
+    const client = getClient();
     const idempotenceKey = uuidv4();
 
     const body = {
@@ -64,7 +84,19 @@ async function createPayment({ amountRub, description, returnUrl, metadata, paym
     }
 
     try {
-        const payment = await checkout.createPayment(body, idempotenceKey);
+        if (client.mode === "basic") {
+            const payment = await client.checkout.createPayment(body, idempotenceKey);
+            return { idempotenceKey, payment };
+        }
+
+        const { data: payment } = await client.http.post("/payments", body, {
+            headers: {
+                Authorization: `Bearer ${client.oauth}`,
+                "Idempotence-Key": idempotenceKey,
+                "Account-Id": client.shopId,
+            },
+        });
+
         return { idempotenceKey, payment };
     } catch (e) {
         const err = new Error(formatYooCheckoutError(e));
@@ -74,9 +106,21 @@ async function createPayment({ amountRub, description, returnUrl, metadata, paym
 }
 
 async function getPayment(paymentId) {
-    const checkout = getCheckout();
     try {
-        return await checkout.getPayment(paymentId);
+        const client = getClient();
+
+        if (client.mode === "basic") {
+            return await client.checkout.getPayment(paymentId);
+        }
+
+        const { data } = await client.http.get(`/payments/${paymentId}`, {
+            headers: {
+                Authorization: `Bearer ${client.oauth}`,
+                "Account-Id": client.shopId,
+            },
+        });
+
+        return data;
     } catch (e) {
         const err = new Error(formatYooCheckoutError(e));
         err.cause = e;
