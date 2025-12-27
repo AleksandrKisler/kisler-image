@@ -100,6 +100,29 @@ describe("uploads + token debit", () => {
         expect(newFiles).toHaveLength(0);
     });
 
+    test("tiff uploads are converted to jpeg", async () => {
+        const buffer = await sharp({
+            create: {width: 1, height: 1, channels: 3, background: {r: 255, g: 0, b: 0}}
+        })
+            .tiff()
+            .toBuffer();
+
+        const res = await request(app)
+            .post("/api/v1/uploads/photo")
+            .set("Authorization", "Bearer " + token())
+            .attach("photo", buffer, {filename: "tiny.tiff", contentType: "image/tiff"});
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.imageUrl).toMatch(/\.jpg$/);
+
+        const saved = path.join(__dirname, "..", "public", res.body.imageUrl);
+        expect(fs.existsSync(saved)).toBe(true);
+        const metadata = await sharp(saved).metadata();
+        expect(metadata.format).toBe("jpeg");
+
+        fs.unlinkSync(saved);
+    });
+
     test("failed job refunds token exactly once via webhook", async () => {
         const created = await request(app)
             .post("/api/v1/jobs")
