@@ -90,12 +90,12 @@ uploadsRouter.post("/photo", upload.single("photo"), async (req, res) => {
         .json({ error: { code: "UNSUPPORTED_MEDIA_TYPE", message: "This server cannot decode the provided image format" } });
     }
     try {
-      await sharp(req.file.path).metadata();
+      const inputBuffer = await sharp(req.file.path).toBuffer();
       const parsed = path.parse(req.file.filename);
       filename = `${parsed.name}.jpg`;
       const convertedPath = path.join(photosDir, filename);
       const tempPath = path.join(photosDir, `${parsed.name}-tmp.jpg`);
-      await sharp(req.file.path).jpeg().toFile(tempPath);
+      await sharp(inputBuffer).jpeg().toFile(tempPath);
       await fs.promises.unlink(req.file.path);
       await fs.promises.rename(tempPath, convertedPath);
     } catch (err) {
