@@ -79,4 +79,4 @@ async function getPayment(paymentId) {
     }
 }
 
-module.exports = { createPayment, getPayment: checkout };
+module.exports = { createPayment, getPayment };
