@@ -97,9 +97,11 @@ async function runOnce() {
     )}&jobId=${job.id}`;
 
     const prompts = {
-        smile: "Make a natural gentle smile. Subtle facial motion only. 5 seconds.",
-        blink: "Make a natural blink once or twice with a slight, relaxed smile. Subtle facial motion only. 5 seconds.",
-        surprised: "Show mild surprise. Subtle facial motion only. 5 seconds.",
+        smile: "Create a natural, soft smile with barely noticeable facial movement. Keep identity, skin texture and lighting consistent. No head movement. 5 seconds.",
+        blink: "Create a natural blink once or twice with a light, relaxed smile. Keep identity, skin texture and lighting consistent. Subtle facial motion only, no head movement. 5 seconds.",
+        surprised: "Show a light, restrained surprise: slightly raised brows and softly widened eyes. Keep identity, skin texture and lighting consistent. Minimal facial motion, no head movement. 5 seconds.",
+        calm: "Maintain a calm, confident, friendly-neutral expression. Keep face relaxed with smooth, minimal motion. Keep identity, skin texture and lighting consistent. No head movement. 5 seconds.",
+        joy: "Show bright joy with a wide, warm smile and friendly gaze. Allow slightly more facial movement and energy while keeping identity, skin texture and lighting consistent. Minimal head movement. 5 seconds.",
     };
 
     const prompt = prompts[job.animation_code] || prompts.blink;
