@@ -147,7 +147,7 @@ function createAuthRouter() {
         if (!user) {
             const id = uuidv4();
             const now = new Date().toISOString();
-            user = { id, email, password_hash: null, token_balance: 0, created_at: now };
+            user = { id, email, password_hash: null, token_balance: 1, created_at: now };
             await db("users").insert(user);
         }
 
