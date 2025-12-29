@@ -6,8 +6,8 @@ const { createPayment, getPayment } = require("../../integrations/yookassa/clien
 
 // Fixed plans (must match /plans)
 const PLANS = {
-    one: { id: "one", title: "1 видео", videos: 1, priceRub: 199 },
-    three: { id: "three", title: "3 видео", videos: 3, priceRub: 499 },
+    one: { id: "one", title: "1 видео", videos: 1, priceRub: 169 },
+    three: { id: "three", title: "3 видео", videos: 3, priceRub: 469 },
 };
 
 const paymentsRouter = express.Router();
